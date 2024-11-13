@@ -1,2 +1,2 @@
 # duplicator_delete
-um removedor de arquivos duplicados com capacidade de buscar em pastas e subpastas a partir da seleção da pasta raiz por meio de uma janela de interface grafica bacana
+execute, selecione uma pasta qualquer e o script vai analisar as pastas, subpastas e arquivos, te mostrando quantas duplicatas foram encontradas no final te dando a opcao de deletar ou nao os duplicados
