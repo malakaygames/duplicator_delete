@@ -1,176 +1,93 @@
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 import os
 import hashlib
 from collections import defaultdict
-from pathlib import Path
-import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
-class DuplicateFinderApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Localizador de Arquivos Duplicados")
-        self.root.geometry("800x600")
-        
-        # Configuração do tema
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        # Variáveis
-        self.folder_path = tk.StringVar()
-        self.status_var = tk.StringVar()
-        self.status_var.set("Aguardando seleção da pasta...")
-        self.duplicates = defaultdict(list)
-        
-        self.create_widgets()
-        self.center_window()
-        
-    def center_window(self):
-        self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
-        
-    def create_widgets(self):
-        # Frame principal
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Botão de seleção de pasta
-        select_button = ttk.Button(main_frame, text="Selecionar Pasta", command=self.select_folder)
-        select_button.pack(pady=10)
-        
-        # Label para mostrar o caminho selecionado
-        path_label = ttk.Label(main_frame, textvariable=self.folder_path, wraplength=700)
-        path_label.pack(pady=5)
-        
-        # Barra de progresso
-        self.progress = ttk.Progressbar(main_frame, mode='indeterminate')
-        self.progress.pack(fill=tk.X, pady=10)
-        
-        # Status
-        status_label = ttk.Label(main_frame, textvariable=self.status_var)
-        status_label.pack(pady=5)
-        
-        # Treeview para mostrar resultados
-        self.tree = ttk.Treeview(main_frame, columns=('Tamanho', 'Caminho'), show='headings')
-        self.tree.heading('Tamanho', text='Tamanho (bytes)')
-        self.tree.heading('Caminho', text='Caminho do Arquivo')
-        self.tree.pack(fill=tk.BOTH, expand=True, pady=10)
-        
-        # Scrollbar para o Treeview
-        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        
-        # Botão para remover duplicados
-        self.remove_button = ttk.Button(main_frame, text="Remover Duplicados", 
-                                      command=self.remove_duplicates, state=tk.DISABLED)
-        self.remove_button.pack(pady=10)
-        
-    def select_folder(self):
-        folder_selected = filedialog.askdirectory()
-        if folder_selected:
-            self.folder_path.set(folder_selected)
-            self.status_var.set("Iniciando busca por duplicados...")
-            self.tree.delete(*self.tree.get_children())
-            self.progress.start()
-            self.remove_button.config(state=tk.DISABLED)
-            
-            # Iniciar busca em uma thread separada
-            thread = threading.Thread(target=self.find_duplicates, args=(folder_selected,))
-            thread.daemon = True
-            thread.start()
-            
-    def calculate_hash(self, filepath):
-        """Calcula o hash MD5 de um arquivo."""
-        hash_md5 = hashlib.md5()
-        with open(filepath, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_md5.update(chunk)
-        return hash_md5.hexdigest()
+def calculate_file_hash(filepath):
+    """Calcula o hash SHA-256 do conteúdo do arquivo."""
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as file:
+        # Lê o arquivo em chunks para lidar com arquivos grandes
+        chunk = file.read(65536)  # 64kb chunks
+        while chunk:
+            hasher.update(chunk)
+            chunk = file.read(65536)
+    return hasher.hexdigest()
+
+def find_duplicates(directory):
+    """Encontra arquivos duplicados em um diretório e suas subpastas."""
+    hash_map = defaultdict(list)
+    total_files = 0
     
-    def find_duplicates(self, folder_path):
-        """Encontra arquivos duplicados baseado no conteúdo."""
-        self.duplicates.clear()
-        
+    # Percorre recursivamente o diretório
+    for root, _, files in os.walk(directory):
+        for filename in files:
+            total_files += 1
+            filepath = os.path.join(root, filename)
+            try:
+                file_hash = calculate_file_hash(filepath)
+                hash_map[file_hash].append(filepath)
+            except (IOError, OSError) as e:
+                print(f"Erro ao processar arquivo {filepath}: {e}")
+    
+    # Filtra apenas os hashes que têm duplicatas
+    duplicates = {k: v for k, v in hash_map.items() if len(v) > 1}
+    return duplicates, total_files
+
+def delete_files(files):
+    """Deleta uma lista de arquivos."""
+    for file in files:
         try:
-            # Primeiro, agrupa arquivos por tamanho
-            size_dict = defaultdict(list)
-            for root, _, files in os.walk(folder_path):
-                for filename in files:
-                    filepath = os.path.join(root, filename)
-                    try:
-                        file_size = os.path.getsize(filepath)
-                        size_dict[file_size].append(filepath)
-                    except (OSError, PermissionError):
-                        continue
-            
-            # Para arquivos do mesmo tamanho, calcula o hash
-            for size, files in size_dict.items():
-                if len(files) > 1:
-                    hash_dict = defaultdict(list)
-                    for filepath in files:
-                        try:
-                            file_hash = self.calculate_hash(filepath)
-                            hash_dict[file_hash].append(filepath)
-                        except (OSError, PermissionError):
-                            continue
-                    
-                    # Adiciona apenas os grupos com duplicados
-                    for file_hash, filepath_list in hash_dict.items():
-                        if len(filepath_list) > 1:
-                            self.duplicates[file_hash] = filepath_list
-            
-            self.root.after(0, self.update_results)
-            
-        except Exception as e:
-            self.root.after(0, lambda: self.status_var.set(f"Erro: {str(e)}"))
-            self.root.after(0, self.progress.stop)
+            os.remove(file)
+            print(f"Deletado: {file}")
+        except OSError as e:
+            print(f"Erro ao deletar {file}: {e}")
+
+def main():
+    root = tk.Tk()
+    root.withdraw()  # Esconde a janela principal
     
-    def update_results(self):
-        """Atualiza a interface com os resultados encontrados."""
-        self.progress.stop()
-        self.tree.delete(*self.tree.get_children())
-        
-        if not self.duplicates:
-            self.status_var.set("Nenhum arquivo duplicado encontrado.")
-            return
-        
-        for file_hash, filepath_list in self.duplicates.items():
-            group = self.tree.insert("", "end", text=file_hash)
-            file_size = os.path.getsize(filepath_list[0])
-            
-            for filepath in filepath_list:
-                self.tree.insert(group, "end", values=(file_size, filepath))
-        
-        total_duplicates = sum(len(files) - 1 for files in self.duplicates.values())
-        self.status_var.set(f"Encontrados {total_duplicates} arquivos duplicados.")
-        self.remove_button.config(state=tk.NORMAL)
+    # Solicita ao usuário selecionar uma pasta
+    print("Selecione a pasta para procurar arquivos duplicados...")
+    directory = filedialog.askdirectory(title="Selecione a pasta para analisar")
     
-    def remove_duplicates(self):
-        """Remove os arquivos duplicados, mantendo apenas uma cópia de cada."""
-        if not messagebox.askyesno("Confirmar", 
-                                 "Isto removerá todos os arquivos duplicados, mantendo apenas uma cópia de cada.\n"
-                                 "Deseja continuar?"):
-            return
-        
-        removed_count = 0
-        for filepath_list in self.duplicates.values():
-            # Mantém o primeiro arquivo e remove os outros
-            for filepath in filepath_list[1:]:
-                try:
-                    os.remove(filepath)
-                    removed_count += 1
-                except (OSError, PermissionError) as e:
-                    messagebox.showerror("Erro", f"Não foi possível remover {filepath}\nErro: {str(e)}")
-        
-        messagebox.showinfo("Concluído", f"Foram removidos {removed_count} arquivos duplicados.")
-        self.select_folder()  # Atualiza a lista
+    if not directory:
+        print("Nenhuma pasta selecionada. Encerrando...")
+        return
+    
+    print(f"\nAnalisando arquivos em: {directory}")
+    print("Isso pode levar alguns minutos dependendo da quantidade de arquivos...\n")
+    
+    duplicates, total_files = find_duplicates(directory)
+    
+    if not duplicates:
+        print(f"Nenhum arquivo duplicado encontrado entre os {total_files} arquivos analisados.")
+        return
+    
+    # Mostra os resultados
+    print(f"\nEncontrados {sum(len(v) - 1 for v in duplicates.values())} arquivos duplicados "
+          f"em {total_files} arquivos analisados:")
+    
+    for hash_value, file_list in duplicates.items():
+        print(f"\nGrupo de arquivos idênticos (hash: {hash_value[:8]}...):")
+        for i, file in enumerate(file_list, 1):
+            print(f"{i}. {file}")
+    
+    # Pergunta se o usuário quer deletar as duplicatas
+    while True:
+        response = input("\nDeseja deletar os arquivos duplicados? (s/n): ").lower()
+        if response in ['s', 'n']:
+            break
+        print("Por favor, responda com 's' para sim ou 'n' para não.")
+    
+    if response == 's':
+        for hash_value, file_list in duplicates.items():
+            # Mantém o primeiro arquivo e deleta os demais
+            delete_files(file_list[1:])
+        print("\nArquivos duplicados foram deletados.")
+    else:
+        print("\nNenhum arquivo foi deletado.")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = DuplicateFinderApp(root)
-    root.mainloop()
+    main()
